@@ -150,26 +150,30 @@ function rowNums(sp) { const o = []; for (let i = sp.r1; i <= sp.r2; i++) o.push
 // ==================== 邮件 / ZIP ====================
 function fetchMailBySender(sender, pred) {
   return new Promise((resolve, reject) => {
-    const imap = new Imap({ ...CONFIG.imap, tls: true, tlsOptions: { rejectUnauthorized: false } });
+    const imap = new Imap({ ...CONFIG.imap, tls: true, tlsOptions: { rejectUnauthorized: false }, connTimeout: 20000, authTimeout: 20000, timeout: 20000 });
+    let settled = false;
+    const done = (fn, val) => { if (!settled) { settled = true; fn(val); } };
     imap.once('ready', () => { imap.openBox('INBOX', true, err => {
-      if (err) return reject(err);
+      if (err) return done(reject, err);
       imap.search([['FROM', sender]], (err, uids) => {
-        if (err) return reject(err);
-        if (!uids.length) { imap.end(); return resolve(null); }
+        if (err) return done(reject, err);
+        if (!uids.length) { imap.end(); return done(resolve, null); }
         const recent = uids.slice(-7).reverse();
-        let done = 0, chosen = null;
+        let done2 = 0, chosen = null;
         recent.forEach(uid => {
           const f = imap.fetch(uid, { bodies: '' });
           let raw = '';
           f.on('message', m => m.on('body', s => s.on('data', c => raw += c.toString('utf8'))));
-          f.once('error', reject);
-          f.once('end', () => { simpleParser(raw, (e, mail) => { if (e) return reject(e); done++;
+          f.once('error', e => done(reject, e));
+          f.once('end', () => { simpleParser(raw, (e, mail) => { if (e) return done(reject, e); done2++;
             if (!chosen && pred(mail.subject || '')) { chosen = mail; log('选中邮件', mail.subject, mail.date); }
-            if (done === recent.length) { imap.end(); resolve(chosen); } }); });
+            if (done2 === recent.length) { imap.end(); done(resolve, chosen); } }); });
         });
       });
     }); });
-    imap.once('error', reject); imap.connect();
+    imap.once('error', e => done(reject, e));
+    imap.once('end', () => { if (!settled) done(resolve, null); });
+    imap.connect();
   });
 }
 function httpsDownload(url) {
@@ -183,12 +187,24 @@ function httpsDownload(url) {
 async function fetchZips() {
   const matchSubj = s => s.startsWith(CONFIG.dashboardSubjectPrefix) ||
     (CONFIG.dashboardSubjectAltPrefix && s.startsWith(CONFIG.dashboardSubjectAltPrefix));
-  const mail = await fetchMailBySender(CONFIG.dashboardMailFrom, matchSubj);
+  const mail = await withRetry(() => fetchMailBySender(CONFIG.dashboardMailFrom, matchSubj), '取看板邮件', 4, 3000);
   if (!mail) throw new Error('未找到看板邮件');
   const task = mail.text.match(/taskId=(\d+)/); const code = mail.text.match(/提取码[：:]\s*(\d+)/);
   if (!task || !code) throw new Error('未找到 taskId/提取码');
   const url = `https://shushuos.boltray.com/v1/ta/dashboard/daily/reportFileDownload?taskId=${task[1]}&downloadCode=${code[1]}&lang=zh-CN`;
   return new AdmZip(await httpsDownload(url));
+}
+
+// 通用重试（IMAP/HTTP 偶发失败时重试）
+async function withRetry(fn, label, retries = 4, delayMs = 3000) {
+  let lastErr;
+  for (let i = 1; i <= retries; i++) {
+    try { return await fn(); } catch (e) {
+      lastErr = e; log(`${label} 第 ${i}/${retries} 次失败: ${e.message}`);
+      if (i < retries) await sleep(delayMs * i);
+    }
+  }
+  throw lastErr;
 }
 
 // ==================== CSV ====================
@@ -252,7 +268,7 @@ function parseAdXls(file) {
   return out;
 }
 async function fetchAdData() {
-  const mail = await fetchMailBySender(CONFIG.adMailFrom, s => s.trim() === CONFIG.adMailSubject);
+  const mail = await withRetry(() => fetchMailBySender(CONFIG.adMailFrom, s => s.trim() === CONFIG.adMailSubject), '取广告邮件', 4, 3000);
   if (!mail) return {};
   const att = (mail.attachments || []).find(a => /\.xls$/i.test(a.filename || ''));
   if (!att) return {};
