@@ -42,8 +42,9 @@ const REGIONS = {
     },
     rlTotalRow: 3,
     dataTableUrl: 'https://leiting.feishu.cn/wiki/TmLYw7DCViOOZZkUR7uckJJKnsc',
-    // 日报表广告列布局（连续范围起点列 & 各值列）
-    adCol: { colGpAcct: 'AD', colIosCost: 'AH', colGpCost: 'AI' },
+    // 日报表广告列布局（与本地脚本一致）：
+    // 港台：AD=gp广告新增, AE-AH=公式列(不写), AI=iOS消耗, AJ=GP消耗
+    adCol: { colGpAcct: 'AD', colIosCost: 'AI', colGpCost: 'AJ' },
     ribaoCols: 15, // 港台 C-Q
     label: '港台',
   },
@@ -62,7 +63,7 @@ const REGIONS = {
     },
     rlTotalRow: 3,
     dataTableUrl: 'https://leiting.feishu.cn/wiki/FO2mwaVvdiurTsk3b2ackqPFnTd',
-    adCol: { colGpAcct: 'W', colIosCost: 'AA', colGpCost: 'AB' },
+    adCol: { colGpAcct: 'V', colIosCost: 'AA', colGpCost: 'AB' },
     ribaoCols: 11, // 欧美 C-M
     label: '欧美',
   },
@@ -135,7 +136,11 @@ async function readRange(sheetId, a1Range) {
 // 写 range: sheetId!A1:B2, cells=[[{value}...],...]（值静态覆盖）
 async function writeRange(sheetId, a1Range, cells2D) {
   const full = `${sheetId}!${a1Range}`;
-  const values = cells2D.map(row => row.map(c => (c && c.value !== undefined && c.value !== null) ? c.value : ''));
+  const values = cells2D.map(row => row.map(c => {
+    if (c === null || c === undefined) return '';
+    if (typeof c === 'object' && 'value' in c) return (c.value !== undefined && c.value !== null) ? c.value : '';
+    return c; // 纯数值
+  }));
   const r = await feishu('PUT', `/open-apis/sheets/v2/spreadsheets/${CONFIG.feishuSpreadsheetToken}/values`,
     { valueRange: { range: full, values } });
   if (!r || r.code !== 0) throw new Error('写失败 ' + full + ': ' + JSON.stringify(r));
@@ -376,14 +381,18 @@ async function main() {
       const ad = adData[date];
       if (ad) {
         const { colGpAcct, colIosCost, colGpCost } = CONFIG.adCol;
+        // 只写 3 个值格（gp广告新增 / iOS消耗 / GP消耗），绝不触碰中间的公式列（AE-AH / W-Z）
+        // 分开逐格写，避免连续 range 覆盖公式列
         if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colGpAcct}${ribaoRow}`)) {
-          const cells = [{ value: ad.gpAdAcct || 0 }, {}, {}, {}, { value: Math.round(ad.iosCost || 0) }, { value: Math.round(ad.gpCost || 0) }];
-          // 布局：colGpAcct .. colGpCost，其中 iosCost/gpCost 位置固定偏移（与本地脚本一致）
-          // 简化：写 colGpAcct 起 6 格（gpAcct,3空,iosCost,gpCost）
-          const c1 = colIndex(colGpAcct), c6 = colIndex(colGpCost);
-          await writeRange(CONFIG.sheetIds.ribao, `${colGpAcct}${ribaoRow}:${colGpCost}${ribaoRow}`, [cells.slice(0, c6 - c1 + 1)]);
-          log('  日报表 广告列 ' + ribaoRow + ' 已写入');
+          await writeRange(CONFIG.sheetIds.ribao, `${colGpAcct}${ribaoRow}:${colGpAcct}${ribaoRow}`, [[ad.gpAdAcct || 0]]);
         }
+        if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colIosCost}${ribaoRow}`)) {
+          await writeRange(CONFIG.sheetIds.ribao, `${colIosCost}${ribaoRow}:${colIosCost}${ribaoRow}`, [[Math.round(ad.iosCost || 0)]]);
+        }
+        if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colGpCost}${ribaoRow}`)) {
+          await writeRange(CONFIG.sheetIds.ribao, `${colGpCost}${ribaoRow}:${colGpCost}${ribaoRow}`, [[Math.round(ad.gpCost || 0)]]);
+        }
+        log('  日报表 广告列 ' + ribaoRow + ' 已写入');
       }
     }
     const iosRow = await findDateRow(CONFIG.sheetIds.ios, searchStr);
