@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '22'
       - name: 安装依赖
-        run: npm ci
+        run: npm install
       - name: 运行日报并写飞书
         env:
           REGION: ${{ github.event.inputs.region }}
