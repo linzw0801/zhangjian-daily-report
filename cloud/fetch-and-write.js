@@ -298,12 +298,23 @@ async function readDateRows(sheetId, startRow, endRow) {
   const map = {};
   r.rows.forEach((rowArr, i) => {
     const v = (rowArr[0] || {}).value;
-    if (typeof v === 'string' && /^\d{4}\/\d+\/\d+$/.test(v)) {
-      const [y, m, d] = v.split('/');
-      map[`${y}-${String(+m).padStart(2, '0')}-${String(+d).padStart(2, '0')}`] = (r.row_indices[i] || (startRow + i));
-    }
+    const dateKey = excelOrStringDate(v);
+    if (dateKey) map[dateKey] = (r.row_indices[i] || (startRow + i));
   });
   return map;
+}
+// 兼容两种日期形式：字符串 "2026/8/29" 或 Excel 日期序列号 46263 → "YYYY-MM-DD"
+function excelOrStringDate(v) {
+  if (typeof v === 'string') {
+    const m = v.trim().match(/^(\d{4})\/(\d+)\/(\d+)$/);
+    if (m) return `${m[1]}-${String(+m[2]).padStart(2, '0')}-${String(+m[3]).padStart(2, '0')}`;
+    return null;
+  }
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
+  return null;
 }
 async function readRangeGrid(sheetId, startCol, endCol, startRow, endRow) {
   const r = await readRange(sheetId, `${startCol}${startRow}:${endCol}${endRow}`);
