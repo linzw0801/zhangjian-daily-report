@@ -1,0 +1,29 @@
+name: 杖剑港台欧美日报
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: '地区: gt(港台) / mw(欧美)'
+        required: true
+        default: 'mw'
+        type: string
+
+jobs:
+  daily-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装依赖
+        run: npm ci
+      - name: 运行日报并写飞书
+        env:
+          REGION: ${{ github.event.inputs.region }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          QQ_MAIL_PASSWORD: ${{ secrets.QQ_MAIL_PASSWORD }}
+        run: node cloud/fetch-and-write.js

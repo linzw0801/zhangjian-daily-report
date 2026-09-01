@@ -1,0 +1,12 @@
+{
+  "name": "zhangjian-daily-report-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "adm-zip": "^0.5.18",
+    "imap": "^0.8.19",
+    "mailparser": "^3.7.4",
+    "xlsx": "^0.18.5"
+  }
+}
