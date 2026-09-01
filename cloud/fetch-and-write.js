@@ -411,11 +411,11 @@ async function main() {
     const firstCol = allCols[0][0], lastCol = allCols[allCols.length - 1][0];
     const dateRows = await readDateRows(sheetId, 4, 700);
     const grid = await readRangeGrid(sheetId, firstCol, lastCol, 3, 700);
-    // 合计行
+    // 合计行（阶段值）：只写缺失列所在的最小区间，段内已有列保留原值
     const tSrc = buildRetentionLtvCells(retention.total[channel] || {}, ltv.total[channel] || {}, maps);
     const tCur = grid[CONFIG.rlTotalRow] || {};
     const tMissing = tSrc.filter(c => c.value !== null && (tCur[c.col] === undefined || tCur[c.col] === null || tCur[c.col] === ''));
-    if (tMissing.length) await writeRange(sheetId, `${firstCol}${CONFIG.rlTotalRow}:${lastCol}${CONFIG.rlTotalRow}`, [tSrc.map(c => tMissing.some(mm => mm.col === c.col) ? c.value : (tCur[c.col] ?? ''))]);
+    if (tMissing.length) await writeMissingRange(sheetId, CONFIG.rlTotalRow, tSrc, tMissing, tCur, allCols);
     // 每日行：只写该行数据源有值且飞书为空的列（迟到留存在此补上）
     let cnt = 0;
     for (const dateKey of Object.keys(retention.byDate).sort()) {
@@ -425,14 +425,31 @@ async function main() {
       const cur = grid[row] || {};
       const missing = src.filter(c => c.value !== null && (cur[c.col] === undefined || cur[c.col] === null || cur[c.col] === ''));
       if (!missing.length) continue;
-      // 构造整行：缺失列用源值，其余保留现状（值静态，覆盖无害）
-      const rowVals = allCols.map(c => { const srcCell = src.find(x => x.col === c.col); if (srcCell && srcCell.value !== null && missing.some(mm => mm.col === c.col)) return srcCell.value; const curVal = cur[c.col]; return (curVal !== undefined && curVal !== null && curVal !== '') ? curVal : ''; });
-      await writeRange(sheetId, `${firstCol}${row}:${lastCol}${row}`, [rowVals]);
+      // 只写缺失列所在的最小区间，绝不写区间外（保护更早的已有列），区间内已有列保留原值
+      await writeMissingRange(sheetId, row, src, missing, cur, allCols);
       cnt++;
     }
     log(`  [留存/LTV] ${sheetName}(${sheetId}) start=${retentionStart}: 补缺失 ${cnt} 行`);
   }
   log('=== ' + CONFIG.label + ' 日报完成 ===');
+}
+
+// 只写该行缺失列所在的最小区间；区间内每列值 = 缺失→源值，非缺失→保留当前（绝不用 '' 覆盖已有值）
+async function writeMissingRange(sheetId, row, srcCells, missingCells, cur, allCols) {
+  const missingCols = missingCells.map(c => c.col);
+  const minI = Math.min(...missingCols.map(c => colIndex(c)));
+  const maxI = Math.max(...missingCols.map(c => colIndex(c)));
+  const startCol = colLetter(minI), endCol = colLetter(maxI);
+  // 该范围内每列：缺失→源值；否则保留 cur（有值给值，空才给 ''）
+  const segVals = [];
+  for (let i = minI; i <= maxI; i++) {
+    const col = colLetter(i);
+    const missCell = missingCells.find(c => c.col === col);
+    if (missCell) { segVals.push(missCell.value); continue; }
+    const curVal = cur[col];
+    segVals.push((curVal !== undefined && curVal !== null && curVal !== '') ? curVal : '');
+  }
+  await writeRange(sheetId, `${startCol}${row}:${endCol}${row}`, [segVals]);
 }
 
 main().then(() => process.exit(0)).catch(e => { console.error('FATAL:', e); process.exit(1); });
