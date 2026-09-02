@@ -440,7 +440,27 @@ async function main() {
     }
     log(`  [留存/LTV] ${sheetName}(${sheetId}) start=${retentionStart}: 补缺失 ${cnt} 行`);
   }
-  log('=== ' + CONFIG.label + ' 日报完成 ===');
+  log('=== ' + CONFIG.label + ' 日报完成，推送通知 ===');
+  await sendWebhook(`✅ ${CONFIG.label}日报执行完成\n${CONFIG.label}数据表：${CONFIG.dataTableUrl}`);
+}
+
+// ==================== 飞书 webhook 推送 ====================
+const WEBHOOK_URL = process.env.FEISHU_WEBHOOK_URL || '';
+function sendWebhook(text) {
+  return new Promise((resolve) => {
+    if (!WEBHOOK_URL) { log('未配置 FEISHU_WEBHOOK_URL，跳过推送'); return resolve(); }
+    try {
+      const body = JSON.stringify({ msg_type: 'text', content: { text } });
+      const req = https.request(WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => { res.resume(); res.on('end', resolve); });
+      req.on('error', () => resolve());
+      req.setTimeout(10000, () => { req.destroy(); resolve(); });
+      req.write(body);
+      req.end();
+    } catch (e) { resolve(); }
+  });
 }
 
 // 只写该行缺失列所在的最小区间；区间内每列值 = 缺失→源值，非缺失→保留当前（绝不用 '' 覆盖已有值）
@@ -461,4 +481,7 @@ async function writeMissingRange(sheetId, row, srcCells, missingCells, cur, allC
   await writeRange(sheetId, `${startCol}${row}:${endCol}${row}`, [segVals]);
 }
 
-main().then(() => process.exit(0)).catch(e => { console.error('FATAL:', e); process.exit(1); });
+main().then(() => process.exit(0)).catch(e => {
+  console.error('FATAL:', e);
+  sendWebhook(`❌ ${CONFIG.label}日报执行失败：${e.message}\n${CONFIG.label}数据表：${CONFIG.dataTableUrl}`).then(() => process.exit(1));
+});
