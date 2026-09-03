@@ -478,7 +478,17 @@ async function writeMissingRange(sheetId, row, srcCells, missingCells, cur, allC
     const curVal = cur[col];
     segVals.push((curVal !== undefined && curVal !== null && curVal !== '') ? curVal : '');
   }
-  await writeRange(sheetId, `${startCol}${row}:${endCol}${row}`, [segVals]);
+  // 用 invoke_write 写"值+0.00格式"，避免预置行百分比格式把 39.67 渲染成 3967.00%
+  const range = `${sheetId}!${startCol}${row}:${endCol}${row}`;
+  const input = {
+    cells: [segVals.map(v => ({ value: v, cell_styles: { number_format: '0.00' } }))],
+    excel_id: CONFIG.feishuSpreadsheetToken,
+    range,
+    sheet_id: sheetId,
+  };
+  const r = await feishu('POST', `/open-apis/sheet_ai/v2/spreadsheets/${CONFIG.feishuSpreadsheetToken}/tools/invoke_write`,
+    { input: JSON.stringify(input), tool_name: 'set_cell_range' });
+  if (!r || r.code !== 0) throw new Error('invoke_write 失败 ' + range + ': ' + JSON.stringify(r));
 }
 
 main().then(() => process.exit(0)).catch(e => {
