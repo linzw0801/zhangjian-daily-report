@@ -381,18 +381,28 @@ async function main() {
       const ad = adData[date];
       if (ad) {
         const { colGpAcct, colIosCost, colGpCost } = CONFIG.adCol;
-        // 只写 3 个值格（gp广告新增 / iOS消耗 / GP消耗），绝不触碰中间的公式列（AE-AH / W-Z）
-        // 分开逐格写，避免连续 range 覆盖公式列
-        if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colGpAcct}${ribaoRow}`)) {
-          await writeRange(CONFIG.sheetIds.ribao, `${colGpAcct}${ribaoRow}:${colGpAcct}${ribaoRow}`, [[ad.gpAdAcct || 0]]);
+        const sheet = CONFIG.sheetIds.ribao;
+        // GP广告新增（注册账号数）：只补空缺，不覆盖
+        if (await isCellEmpty(sheet, `${colGpAcct}${ribaoRow}`)) {
+          await writeRange(sheet, `${colGpAcct}${ribaoRow}:${colGpAcct}${ribaoRow}`, [[ad.gpAdAcct || 0]]);
         }
-        if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colIosCost}${ribaoRow}`)) {
-          await writeRange(CONFIG.sheetIds.ribao, `${colIosCost}${ribaoRow}:${colIosCost}${ribaoRow}`, [[Math.round(ad.iosCost || 0)]]);
+        // iOS/GP 消耗：广告花费在 T+3 内会被小幅修正，且每次广告邮件都带近 7 天明细，
+        // 因此每天用本次邮件里的最新值覆盖刷新对应日期（回填修正过去一周），只动这两个值格，
+        // 绝不触碰中间的公式列（AE-AH / W-Z）。无变化的格子不写，保证重复运行幂等。
+        const costRange = await readRange(sheet, `${colIosCost}${ribaoRow}:${colGpCost}${ribaoRow}`);
+        const costRowCells = costRange.rows[0] || [];
+        const curIos = (costRowCells[0] || {}).value;
+        const curGp = (costRowCells[1] || {}).value;
+        const changes = [];
+        if (ad.iosCost !== undefined) {
+          const v = Math.round(ad.iosCost);
+          if (curIos !== v) { await writeRange(sheet, `${colIosCost}${ribaoRow}:${colIosCost}${ribaoRow}`, [[v]]); changes.push(`iOS消耗 ${curIos === undefined || curIos === null || curIos === '' ? '空' : curIos}→${v}`); }
         }
-        if (await isCellEmpty(CONFIG.sheetIds.ribao, `${colGpCost}${ribaoRow}`)) {
-          await writeRange(CONFIG.sheetIds.ribao, `${colGpCost}${ribaoRow}:${colGpCost}${ribaoRow}`, [[Math.round(ad.gpCost || 0)]]);
+        if (ad.gpCost !== undefined) {
+          const v = Math.round(ad.gpCost);
+          if (curGp !== v) { await writeRange(sheet, `${colGpCost}${ribaoRow}:${colGpCost}${ribaoRow}`, [[v]]); changes.push(`GP消耗 ${curGp === undefined || curGp === null || curGp === '' ? '空' : curGp}→${v}`); }
         }
-        log('  日报表 广告列 ' + ribaoRow + ' 已写入');
+        log('  日报表 广告列 ' + ribaoRow + (changes.length ? ' 消耗修正: ' + changes.join(', ') : ' 消耗列无变化'));
       }
     }
     const iosRow = await findDateRow(CONFIG.sheetIds.ios, searchStr);
